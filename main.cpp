@@ -16,7 +16,7 @@ int main(int argc, char *argv[])
     LiveClientWindow w;
     w.show();
     Decoder abc;
-    listOver = false;
+    listOver = true;
 
     w.set_decoder(&abc);
     return a.exec();

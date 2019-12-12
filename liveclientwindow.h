@@ -21,6 +21,7 @@
 namespace Ui {
 class LiveClientWindow;
 enum VIDEOTYPE {CAMERA, NETWORK, LOCALFILE, NONE};
+enum CLIENTSTAT {IDLE, CONNECTING, PLAYING};
 }
 
 //enum VIDEOTYPE{
@@ -48,6 +49,7 @@ private:
     QTimer timer;
     Decoder *decoder;
     Ui::VIDEOTYPE vtype;
+    Ui::CLIENTSTAT m_stat;
 private slots:
     void on_startBtn_pressed();
     void updateFrame();

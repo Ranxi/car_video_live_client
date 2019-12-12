@@ -27,7 +27,7 @@ class Decoder : public QThread
 public:
     Decoder(QObject *parent=0);
     ~Decoder(void);
-    void decode_iplimage(const char *s);
+    void decode_iplimage();
     void run();
 private:
     std::string filename;

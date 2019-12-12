@@ -29,17 +29,17 @@ Decoder::~Decoder(void){
 
 }
 
+
+void Decoder::run()
+{
+    decode_iplimage();
+}
+
+
 void Decoder::set_filename_Run(std::string fnm){
     this->filename = fnm;
     this->start();
 }
-
-void Decoder::run()
-{
-    decode_iplimage(filename.c_str());
-}
-
-
 
 static cv::Mat avframe_to_cvmat(const AVFrame * frame){
     // |>>>>>>>>> code from dalao, refer to: https://zhuanlan.zhihu.com/p/80350418 >>>>>>>>
@@ -151,7 +151,7 @@ static int decode_packet(AVCodecContext *dec_v_ctx, AVCodecContext *dec_a_ctx, A
 //            printf("video_frame%s n:%d coded_n:%d\n",
 //                               cached ? "(cached)" : "",
 //                               video_frame_count++, frame->coded_picture_number);
-            qDebug("[Encoder] ----> Receive frame %3""lld"", latency: %d\n", pkt->pts, av_gettime()-buff_latency[pkt->pts]);
+            qDebug("[Decoder] ----> Receive frame %3""lld"", latency: %d\n", pkt->pts, av_gettime()-buff_latency[pkt->pts]);
             laten_list.push_back(av_gettime()-buff_latency[frame->pts]);
             buff_latency.erase(buff_latency[frame->pts]);
             mutex_imgque.lock();
@@ -224,12 +224,9 @@ int open_codec_context(int *stream_idx, AVCodecContext **dec_ctx, AVFormatContex
     return 0;
 }
 
-void Decoder::decode_iplimage(const char* filenm){
-//    this->filename = filenm;
-//    QList<IplImage*> listImage;
+void Decoder::decode_iplimage(){
     avcodec_register_all();
 
-    //const char *filename=filenm;
     const AVCodec *codec;
     AVCodecContext *video_c= NULL, *audio_c=NULL;
     AVFormatContext *fmtctx;
@@ -247,8 +244,8 @@ void Decoder::decode_iplimage(const char* filenm){
     avformat_network_init();
     // open input file, and allocate format context
     fmtctx = avformat_alloc_context();
-    if(avformat_open_input(&fmtctx, filenm, NULL, NULL) < 0 ){
-        fprintf(stderr, "Could not open source file %s\n", filenm);
+    if(avformat_open_input(&fmtctx, this->filename.c_str(), NULL, NULL) < 0 ){
+        fprintf(stderr, "Could not open source file %s\n", this->filename.c_str());
         exit(1);
     }
     // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>|

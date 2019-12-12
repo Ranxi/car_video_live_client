@@ -16,8 +16,9 @@ LiveClientWindow::LiveClientWindow(QWidget *parent) :
     ui->graphicsView->setScene(new QGraphicsScene());
     ui->graphicsView->scene()->addItem(&pixmap);
     timer.start(1000);
-    ui->videoEdit->setText("rtp://172.16.20.116:56789/live");
+    ui->videoEdit->setText("rtsp://172.16.20.116:56789/live");
     decoder = NULL;
+    m_stat = Ui::IDLE;
 }
 
 LiveClientWindow::~LiveClientWindow()
@@ -33,6 +34,7 @@ void LiveClientWindow::set_decoder(Decoder *dcder){
 
 void LiveClientWindow::on_startBtn_pressed(){
     if(decoder!=NULL && decoder->isRunning()){
+        assert(Ui::PLAYING == m_stat);
         decoder->requestInterruption();
         decoder->quit();
         decoder->wait();
@@ -43,12 +45,24 @@ void LiveClientWindow::on_startBtn_pressed(){
         mutex_imgque.unlock();
         disconnect(&timer, &QTimer::timeout, this, 0);
         ui->startBtn->setText("Start");
-        listOver = false;
+        m_stat = Ui::IDLE;
+        return;
+    }
+    else if (decoder!=NULL && decoder->isFinished() && (Ui::IDLE!=m_stat)){
+        mutex_imgque.lock();
+        for (auto x : listImage)
+            x.release();
+        listImage.clear();
+        mutex_imgque.unlock();
+        disconnect(&timer, &QTimer::timeout, this, 0);
+        ui->startBtn->setText("Start");
+        m_stat = Ui::IDLE;
         return;
     }
     else{
         if(ui->videoEdit->text().trimmed().contains("rtsp://") || ui->videoEdit->text().trimmed().contains("rtp://")){
             // TODO: check the validality of RTSP url
+            m_stat = Ui::CONNECTING;
             decoder->set_filename_Run(ui->videoEdit->text().trimmed().toStdString());
         }
         else{
@@ -59,6 +73,7 @@ void LiveClientWindow::on_startBtn_pressed(){
         }
         connect(&timer, &QTimer::timeout, this, &LiveClientWindow::updateFrame);
         ui->startBtn->setText("Stop");
+        m_stat = Ui::PLAYING;
         timer.start(20);
     }
 }
