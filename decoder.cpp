@@ -4,6 +4,10 @@
 #include <QTime>
 #include <ext/hash_map>
 #include <algorithm>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 
 extern QMutex mutex_imgque;
@@ -39,6 +43,43 @@ void Decoder::run()
 void Decoder::set_filename_Run(std::string fnm){
     this->filename = fnm;
     this->start();
+}
+
+
+int read_sdp( const char *p, char *buf, int bufsize){
+    char *file = (char *)p;
+    char *tmp = NULL;
+    struct stat buffer;
+    int ret = 0;
+    int fd = open(file, O_RDONLY);
+    if (fd < 0) {
+        if (fd > 0) close(fd);
+        return 0;
+    }
+    int status = fstat(fd, &buffer);
+    if (status < 0){
+        if (fd > 0) close(fd);
+        return 0;
+    }
+    if (buffer.st_size > 0 && bufsize >= buffer.st_size){
+        tmp = (char*)av_mallocz(buffer.st_size+1);
+        ret = read(fd, tmp, buffer.st_size);
+        if (ret != buffer.st_size){
+            printf("read file error\n");
+            av_free(tmp);
+            if (fd > 0) close(fd);
+            return 0;
+        }
+        tmp[buffer.st_size] = '\0';
+        strcpy((char*)buf, tmp);
+        av_free(tmp);
+    }else{
+        if (fd > 0) close(fd);
+        return 0;
+    }
+    printf("SDP:\n%s\n", buf);
+    if (fd > 0) close(fd);
+    return strlen(buf);
 }
 
 static cv::Mat avframe_to_cvmat(const AVFrame * frame){
@@ -244,7 +285,13 @@ void Decoder::decode_iplimage(){
     avformat_network_init();
     // open input file, and allocate format context
     fmtctx = avformat_alloc_context();
-    if(avformat_open_input(&fmtctx, this->filename.c_str(), NULL, NULL) < 0 ){
+    unsigned char * iobuffer = (unsigned char *)av_malloc(32768);
+
+    int size = read_sdp("/home/teeshark/lab_projects/live.sdp", (char*)iobuffer, 32768);
+    AVIOContext * avio = avio_alloc_context(iobuffer, size, 0, (void*)NULL, NULL, NULL, NULL);
+    fmtctx->pb = avio;
+    fmtctx->iformat = av_find_input_format("sdp");
+    if(avformat_open_input(&fmtctx, "nothing", NULL, NULL) < 0 ){
         fprintf(stderr, "Could not open source file %s\n", this->filename.c_str());
         exit(1);
     }

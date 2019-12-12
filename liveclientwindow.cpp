@@ -16,7 +16,7 @@ LiveClientWindow::LiveClientWindow(QWidget *parent) :
     ui->graphicsView->setScene(new QGraphicsScene());
     ui->graphicsView->scene()->addItem(&pixmap);
     timer.start(1000);
-    ui->videoEdit->setText("rtsp://172.16.20.116:56789/live");
+    ui->videoEdit->setText("rtp://172.16.20.116:56789/live");
     decoder = NULL;
     m_stat = Ui::IDLE;
 }
