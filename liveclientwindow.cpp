@@ -4,7 +4,7 @@
 #include <QTime>
 
 extern QMutex mutex_imgque;
-extern QList<cv::Mat > listImage;
+extern QList<JYFrame* > listImage;
 extern bool listOver;
 //extern QList<IplImage*> listImage;
 
@@ -39,8 +39,10 @@ void LiveClientWindow::on_startBtn_pressed(){
         decoder->quit();
         decoder->wait();
         mutex_imgque.lock();
-        for (auto x : listImage)
-            x.release();
+        for (auto x : listImage){
+            x->frame.release();
+            free(x);
+        }
         listImage.clear();
         mutex_imgque.unlock();
         disconnect(&timer, &QTimer::timeout, this, 0);
@@ -50,8 +52,10 @@ void LiveClientWindow::on_startBtn_pressed(){
     }
     else if (decoder!=NULL && decoder->isFinished() && (Ui::IDLE!=m_stat)){
         mutex_imgque.lock();
-        for (auto x : listImage)
-            x.release();
+        for (auto x : listImage){
+            x->frame.release();
+            free(x);
+        }
         listImage.clear();
         mutex_imgque.unlock();
         disconnect(&timer, &QTimer::timeout, this, 0);
@@ -82,19 +86,30 @@ void LiveClientWindow::updateFrame(){
     if (!listOver){
 //        IplImage *pimage = &IplImage(frame);
 //        IplImage *image = cvCloneImage(pimage);
+        JYFrame* jyf;
         cv::Mat frame;
+        int64_t l_time;
         bool updated = false;
         mutex_imgque.lock();
         while(listImage.size() > 0){
-            frame = listImage[0];
+            jyf = listImage[0];
     //        listImage.append(image);
             listImage.pop_front();
             qDebug("[Player] listImage count : %d\n", listImage.size());
             updated = true;
+            if(listImage.size() > 0){
+                jyf->frame.release();
+                free(jyf);
+            }
         }
         mutex_imgque.unlock();
         if (!updated)
             return;
+
+        frame = jyf->frame;
+        l_time = jyf->launch_time;
+        jyf->frame.release();
+        free(jyf);
 
         QImage qimg((uchar*)(frame.data),
                     frame.cols,

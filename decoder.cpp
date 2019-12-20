@@ -11,10 +11,11 @@
 
 
 extern QMutex mutex_imgque;
-extern QList<cv::Mat > listImage;
+extern QList<JYFrame* > listImage;
 extern bool listOver;
 
 __gnu_cxx::hash_map<int, int64_t> buff_latency;
+__gnu_cxx::hash_map<int, int64_t> launch_timestamp;
 std::vector<int> laten_list;
 int v_stream_idx, a_stream_idx;
 int width, height;
@@ -150,12 +151,15 @@ static void decode(AVCodecContext *enc_ctx, AVPacket *pkt, AVFrame *frame)
         }
 //        printf("Write packet %3""ld"" (size=%5d)\n", pkt->pts, pkt->size);
 //        fwrite(pkt->data, 1, pkt->size, outfile);
+        int64_t launch_time = launch_timestamp[frame->pts];
+        qDebug("[Decoder] ----> Receive frame %3""lld"", sofar latency:%d, latency: %d\n",
+               frame->pts,av_gettime()-launch_time, av_gettime()-buff_latency[frame->pts]);
+        laten_list.push_back(av_gettime()-buff_latency[frame->pts]);
+        buff_latency.erase(frame->pts);
+        JYFrame * curframe = new JYFrame(launch_time, avframe_to_cvmat(frame));
         mutex_imgque.lock();
         acquire_lock = true;
-        qDebug("[Decoder] ----> Receive frame %3""lld"", latency: %d\n", frame->pts, av_gettime()-buff_latency[frame->pts]);
-        laten_list.push_back(av_gettime()-buff_latency[frame->pts]);
-        buff_latency.erase(buff_latency[frame->pts]);
-        listImage.append(avframe_to_cvmat(frame));
+        listImage.append(curframe);
         // av_packet_unref(pkt);
     }
     if (acquire_lock)
@@ -192,11 +196,15 @@ static int decode_packet(AVCodecContext *dec_v_ctx, AVCodecContext *dec_a_ctx, A
 //            printf("video_frame%s n:%d coded_n:%d\n",
 //                               cached ? "(cached)" : "",
 //                               video_frame_count++, frame->coded_picture_number);
-            qDebug("[Decoder] ----> Receive frame %3""lld"", latency: %d\n", pkt->pts, av_gettime()-buff_latency[pkt->pts]);
+            int64_t launch_time = launch_timestamp[frame->pts];
+            qDebug("[Decoder] ----> Receive frame %3""lld"", sofar latency: %d, decode latency: %d\n",
+                   pkt->pts, av_gettime()-launch_time, av_gettime()-buff_latency[frame->pts]);
             laten_list.push_back(av_gettime()-buff_latency[frame->pts]);
-            buff_latency.erase(buff_latency[frame->pts]);
+            buff_latency.erase(frame->pts);
+            launch_timestamp.erase(frame->pts);
+            JYFrame * curframe = new JYFrame(launch_time, avframe_to_cvmat(frame));
             mutex_imgque.lock();
-            listImage.append(avframe_to_cvmat(frame));
+            listImage.append(curframe);
             mutex_imgque.unlock();
         }
     }
@@ -237,9 +245,9 @@ int open_codec_context(int *stream_idx, AVCodecContext **dec_ctx, AVFormatContex
         stream_index = ret;
         st = fmt_ctx->streams[stream_index];
         /* find decoder for the stream */
-        if (st->codec->codec_type == AVMEDIA_TYPE_VIDEO)
-            dec = avcodec_find_decoder_by_name("h264_cuvid");
-        else
+//        if (st->codec->codec_type == AVMEDIA_TYPE_VIDEO)
+//            dec = avcodec_find_decoder_by_name("h264_cuvid");
+//        else
             dec = avcodec_find_decoder(st->codecpar->codec_id);
         if (!dec) {
             fprintf(stderr, "Failed to find %s codec\n", av_get_media_type_string(type));
@@ -354,10 +362,21 @@ void Decoder::decode_iplimage(){
     int got_frame;
 
     pkt->size = 0;
+//    fmtctx->flags ^= AVFMT_FLAG_GENPTS;
+    const int64_t TIME_PREFIX = av_gettime() & 0xfffff80000000000;
 
     while (!isInterruptionRequested() && av_read_frame(fmtctx, pkt) >=0){
         AVPacket orig_pkt = *pkt;
         buff_latency[pkt->pts] = av_gettime();
+//        int64_t * time_zone = (int64_t *)(pkt->data+pkt->size-128);
+
+//        if (!pkt->flags){
+//            launch_timestamp[pkt->pts] = *time_zone;
+//            *time_zone = 0;
+//        }
+//        else{
+            launch_timestamp[pkt->pts] = av_gettime();
+//        }
         do {
             ret = decode_packet(video_c, audio_c, pkt, frame, &got_frame, 0);
             if (ret < 0)
