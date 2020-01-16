@@ -48,12 +48,14 @@ private:
     QImage qimg;
     QTimer timer;
     Decoder *decoder;
+    QUdpSocket *rcver;
+    bool rcved_firstKeyFrame;
     Ui::VIDEOTYPE vtype;
     Ui::CLIENTSTAT m_stat;
 private slots:
     void on_startBtn_pressed();
     void updateFrame();
-//    void processPendingDatagram();
+    void processPendingDatagram();
 public:
     void set_decoder(Decoder *dcder);
 };

@@ -2,6 +2,7 @@
 #include <cinttypes>
 #include <QMutex>
 #include <QTime>
+#include <QDataStream>
 #include <ext/hash_map>
 #include <algorithm>
 #include <sys/types.h>
@@ -9,14 +10,21 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+//#define USE_H264_CUVID          // use h264_cuvid with NVIDIA Card
+//#define USE_AV_READ_FRAME       // use API from ffmpeg to receive packet
 
 extern QMutex mutex_imgque;
 extern QList<JYFrame* > listImage;
-extern bool listOver;
+extern AVPacketList *pktl;
+extern AVPacketList *pktl_end;
+extern QMutex mutex_pktl;
+extern bool decoded_listOver;
 
 __gnu_cxx::hash_map<int, int64_t> buff_latency;
 __gnu_cxx::hash_map<int, int64_t> launch_timestamp;
-std::vector<int> laten_list;
+std::vector<int> laten_sofar;
+std::vector<int> laten_decode;
+
 int v_stream_idx, a_stream_idx;
 int width, height;
 enum AVPixelFormat pix_fmt;
@@ -45,6 +53,10 @@ void Decoder::set_filename_Run(std::string fnm){
     this->filename = fnm;
     this->start();
 }
+
+//void Decoder::setSocketReceiver(QUdpSocket* rcv){
+//    this->rcver = rcv;
+//}
 
 
 int read_sdp( const char *p, char *buf, int bufsize){
@@ -81,6 +93,21 @@ int read_sdp( const char *p, char *buf, int bufsize){
     printf("SDP:\n%s\n", buf);
     if (fd > 0) close(fd);
     return strlen(buf);
+}
+
+int packt_list_get(AVPacketList **pkt_buffer,
+                   AVPacketList **pkt_buffer_end,
+                   AVPacket      *pkt)
+{
+    AVPacketList *pktl;
+    assert((*pkt_buffer)!=NULL);
+    pktl        = *pkt_buffer;
+    *pkt        = pktl->pkt;
+    *pkt_buffer = pktl->next;
+    if (!pktl->next)
+        *pkt_buffer_end = NULL;
+    av_freep(&pktl);
+    return 0;
 }
 
 static cv::Mat avframe_to_cvmat(const AVFrame * frame){
@@ -152,9 +179,9 @@ static void decode(AVCodecContext *enc_ctx, AVPacket *pkt, AVFrame *frame)
 //        printf("Write packet %3""ld"" (size=%5d)\n", pkt->pts, pkt->size);
 //        fwrite(pkt->data, 1, pkt->size, outfile);
         int64_t launch_time = launch_timestamp[frame->pts];
-        qDebug("[Decoder] ----> Receive frame %3""lld"", sofar latency:%d, latency: %d\n",
+        qDebug("[Decoder] ----> Receive frame %3""lld"", sofar latency:%d, decode latency: %d\n",
                frame->pts,av_gettime()-launch_time, av_gettime()-buff_latency[frame->pts]);
-        laten_list.push_back(av_gettime()-buff_latency[frame->pts]);
+        laten_sofar.push_back(av_gettime()-buff_latency[frame->pts]);
         buff_latency.erase(frame->pts);
         JYFrame * curframe = new JYFrame(launch_time, avframe_to_cvmat(frame));
         mutex_imgque.lock();
@@ -199,7 +226,8 @@ static int decode_packet(AVCodecContext *dec_v_ctx, AVCodecContext *dec_a_ctx, A
             int64_t launch_time = launch_timestamp[frame->pts];
             qDebug("[Decoder] ----> Receive frame %3""lld"", sofar latency: %d, decode latency: %d\n",
                    pkt->pts, av_gettime()-launch_time, av_gettime()-buff_latency[frame->pts]);
-            laten_list.push_back(av_gettime()-buff_latency[frame->pts]);
+            laten_sofar.push_back(av_gettime()- launch_time);
+            laten_decode.push_back(av_gettime() - buff_latency[frame->pts]);
             buff_latency.erase(frame->pts);
             launch_timestamp.erase(frame->pts);
             JYFrame * curframe = new JYFrame(launch_time, avframe_to_cvmat(frame));
@@ -245,10 +273,13 @@ int open_codec_context(int *stream_idx, AVCodecContext **dec_ctx, AVFormatContex
         stream_index = ret;
         st = fmt_ctx->streams[stream_index];
         /* find decoder for the stream */
-//        if (st->codec->codec_type == AVMEDIA_TYPE_VIDEO)
-//            dec = avcodec_find_decoder_by_name("h264_cuvid");
-//        else
+#ifdef USE_H264_CUVID
+        if (st->codec->codec_type == AVMEDIA_TYPE_VIDEO)
+            dec = avcodec_find_decoder_by_name("h264_cuvid");
+        else
+#else
             dec = avcodec_find_decoder(st->codecpar->codec_id);
+#endif
         if (!dec) {
             fprintf(stderr, "Failed to find %s codec\n", av_get_media_type_string(type));
             return AVERROR(EINVAL);
@@ -289,23 +320,33 @@ void Decoder::decode_iplimage(){
     AVFrame *frame; // *tmpframe;
     AVPacket *pkt;
     uint8_t endcode[] = { 0, 0, 1, 0xb7 };
-    listOver = false;
+    decoded_listOver = false;
 
 
     // |>>>>>>>>>>>>>>> init for RTSP >>>>>>>>>>>>>
     avformat_network_init();
     // open input file, and allocate format context
     fmtctx = avformat_alloc_context();
+    std::string in_url = "";
     unsigned char * iobuffer = (unsigned char *)av_malloc(32768);
-
-    int size = read_sdp("/home/teeshark/lab_projects/live.sdp", (char*)iobuffer, 32768);
-    AVIOContext * avio = avio_alloc_context(iobuffer, size, 0, (void*)NULL, NULL, NULL, NULL);
-    fmtctx->pb = avio;
-    fmtctx->iformat = av_find_input_format("sdp");
-    if(avformat_open_input(&fmtctx, "nothing", NULL, NULL) < 0 ){
+    if (this->filename.compare(0, 6, "rtp://" )==0){
+        int size = read_sdp("/home/teeshark/lab_projects/live.sdp", (char*)iobuffer, 32768);
+        AVIOContext * avio = avio_alloc_context(iobuffer, size, 0, (void*)NULL, NULL, NULL, NULL);
+        fmtctx->pb = avio;
+        fmtctx->iformat = av_find_input_format("sdp");
+        in_url = "nothing";
+    }
+    else if (this->filename.compare(0, 6, "udp://" )==0){
+        in_url = this->filename;
+    }
+    else{
+        in_url = "unknown";
+    }
+    if(avformat_open_input(&fmtctx, in_url.c_str(), NULL, NULL) < 0 ){
         fprintf(stderr, "Could not open source file %s\n", this->filename.c_str());
         exit(1);
     }
+    av_free(iobuffer);
     // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>|
     /* retrieve stream information */
     if (avformat_find_stream_info(fmtctx, NULL) < 0) {
@@ -360,23 +401,32 @@ void Decoder::decode_iplimage(){
     int sum_time = 0, intval;
     int index = 0;
     int got_frame;
+    int64 launchT;
 
     pkt->size = 0;
 //    fmtctx->flags ^= AVFMT_FLAG_GENPTS;
     const int64_t TIME_PREFIX = av_gettime() & 0xfffff80000000000;
+    bool frame_eof = false;
 
+#ifndef USE_AV_READ_FRAME
+    while (!isInterruptionRequested() && !frame_eof){
+
+        mutex_pktl.lock();
+        if (pktl == NULL){
+            mutex_pktl.unlock();
+            continue;
+        }
+        packt_list_get(&pktl, &pktl_end, pkt);
+        mutex_pktl.unlock();
+#else
     while (!isInterruptionRequested() && av_read_frame(fmtctx, pkt) >=0){
+#endif
         AVPacket orig_pkt = *pkt;
+        launchT = pkt->pts;
+        pkt->dts = index;
+        pkt->pts = index++;
         buff_latency[pkt->pts] = av_gettime();
-//        int64_t * time_zone = (int64_t *)(pkt->data+pkt->size-128);
-
-//        if (!pkt->flags){
-//            launch_timestamp[pkt->pts] = *time_zone;
-//            *time_zone = 0;
-//        }
-//        else{
-            launch_timestamp[pkt->pts] = av_gettime();
-//        }
+        launch_timestamp[pkt->pts] = launchT;
         do {
             ret = decode_packet(video_c, audio_c, pkt, frame, &got_frame, 0);
             if (ret < 0)
@@ -394,13 +444,17 @@ void Decoder::decode_iplimage(){
         decode_packet(video_c, audio_c, pkt, frame, &got_frame, 1);
     } while (got_frame);
 
-    listOver = true;
+    decoded_listOver = true;
 
 
-    int64_t sum_laten = 0;
-    for(auto x : laten_list)
-        sum_laten += x;
-    qDebug("\navg latency:%f\n", (float)sum_laten*1.0/laten_list.size());
+    int64_t sum_laten_sofar = 0, sum_laten_decode=0;
+    for(auto x : laten_sofar)
+        sum_laten_sofar += x;
+    for(auto x : laten_decode)
+        sum_laten_decode += x;
+    qDebug("\navg sofar latency:%f, decode latency:%f\n",
+           (float)sum_laten_sofar*1.0/laten_sofar.size(),
+           (float)sum_laten_decode*1.0/laten_decode.size());
 
     intval = cur_time.elapsed();
     sum_time += intval;
@@ -409,7 +463,14 @@ void Decoder::decode_iplimage(){
     avcodec_free_context(&video_c);
     avformat_close_input(&fmtctx);
     av_frame_free(&frame);
+    mutex_pktl.lock();
+    while(pktl!=NULL){
+        packt_list_get(&pktl, &pktl_end, pkt);
+        av_packet_free(&pkt);
+    }
+    mutex_pktl.unlock();
     //av_packet_free(&pkt);
     //avformat_free_context(fmtctx);
-
 }
+
+

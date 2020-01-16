@@ -7,7 +7,11 @@
 
 QMutex mutex_imgque;
 QList<JYFrame* > listImage;
-bool listOver;
+
+QMutex mutex_pktl;
+AVPacketList *pktl = NULL;
+AVPacketList *pktl_end = NULL;
+bool decoded_listOver;
 //QList<IplImage*> listImage;
 
 int main(int argc, char *argv[])
@@ -16,7 +20,7 @@ int main(int argc, char *argv[])
     LiveClientWindow w;
     w.show();
     Decoder abc;
-    listOver = true;
+    decoded_listOver = true;
 
     w.set_decoder(&abc);
     return a.exec();

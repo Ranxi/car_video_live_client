@@ -5,6 +5,7 @@
 #include <QObject>
 #include <QThread>
 #include <QDebug>
+#include <QUdpSocket>
 extern "C"
 {
 #include <libavcodec/avcodec.h>
@@ -31,8 +32,10 @@ public:
     void run();
 private:
     std::string filename;
+//    QUdpSocket *rcver;
 public:
     void set_filename_Run(std::string fnm);
+//    void setSocketReceiver(QUdpSocket*);
 };
 
 struct JYFrame{
