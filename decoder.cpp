@@ -184,7 +184,8 @@ static void decode(AVCodecContext *enc_ctx, AVPacket *pkt, AVFrame *frame)
         laten_sofar.push_back(av_gettime()-buff_latency[frame->pts]);
         buff_latency.erase(frame->pts);
         JYFrame * curframe = new JYFrame(launch_time, avframe_to_cvmat(frame));
-        mutex_imgque.lock();
+        if (!acquire_lock)
+            mutex_imgque.lock();
         acquire_lock = true;
         listImage.append(curframe);
         // av_packet_unref(pkt);
@@ -277,9 +278,9 @@ int open_codec_context(int *stream_idx, AVCodecContext **dec_ctx, AVFormatContex
         if (st->codec->codec_type == AVMEDIA_TYPE_VIDEO)
             dec = avcodec_find_decoder_by_name("h264_cuvid");
         else
-#else
-            dec = avcodec_find_decoder(st->codecpar->codec_id);
 #endif
+            dec = avcodec_find_decoder(st->codecpar->codec_id);
+
         if (!dec) {
             fprintf(stderr, "Failed to find %s codec\n", av_get_media_type_string(type));
             return AVERROR(EINVAL);

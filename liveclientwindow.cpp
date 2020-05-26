@@ -37,6 +37,7 @@ void LiveClientWindow::set_decoder(Decoder *dcder){
 
 
 void LiveClientWindow::on_startBtn_pressed(){
+    // dealing with interaction when it is during playing
     if(decoder!=NULL && decoder->isRunning()){
         assert(Ui::PLAYING == m_stat);
         disconnect(rcver, &QUdpSocket::readyRead, this, 0);
@@ -69,6 +70,7 @@ void LiveClientWindow::on_startBtn_pressed(){
         m_stat = Ui::IDLE;
         return;
     }
+    // dealing with interaction when it is inactive
     else{
         if (  //ui->videoEdit->text().trimmed().contains("http://") ||
               ui->videoEdit->text().trimmed().contains("udp://")){
